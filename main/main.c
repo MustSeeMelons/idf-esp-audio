@@ -5,6 +5,8 @@
 #include "esp_log.h"
 #include "sdkconfig.h"
 
+#include "sd/sd.h"
+
 #define BLINK_GPIO 2
 
 static const char *TAG = "example";
@@ -27,6 +29,8 @@ static void blink_led(void)
 
 void app_main(void)
 {
+    sd_init();
+    
     configure_led();
 
     while (1) {
