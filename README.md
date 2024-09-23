@@ -45,6 +45,7 @@ The card must be set into SPI mode - MOSI/CS held high for atleast 74 cycles. Af
 - [Extras from PDF](http://elm-chan.org/docs/mmc/mmc_e.html)
 - [Overflow](https://electronics.stackexchange.com/questions/602105/how-can-i-initialize-use-sd-cards-with-spi)
 - [FAT32](https://www.pjrc.com/tech/8051/ide/fat32.html)
+- [Tutorial series](http://www.rjhcoding.com/avrc-sd-interface-1.php)
 
 ## Upload
 

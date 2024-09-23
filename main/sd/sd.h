@@ -5,7 +5,7 @@
 #include "driver/gpio.h"
 #include <string.h>
 
-typedef struct 
+typedef struct
 {
     volatile uint16_t reserved : 15;
     volatile uint8_t v27_28 : 1;
@@ -24,17 +24,31 @@ typedef struct
     volatile uint8_t card_power_up_status_bit : 1; // Busy
 } CMD58_OCR;
 
-void send_dummy_clocks(void);
+///////// General Initialization /////////
 
-void sd_init_card(void);
+// General initialization function
+esp_err_t sd_init();
+
+esp_err_t sd_init_card(void);
+
+///////// SD Communication /////////
 
 // Sends an SD SPI commabdm the whole 48 bits
 esp_err_t sd_send_command(uint8_t cmd, uint32_t arg);
 
 // Resiece a byte from SD SPI
-esp_err_t sd_recieve_response(uint8_t *response);
+esp_err_t sd_read_byte(uint8_t *response);
 
 void sd_read_bytes(uint8_t *target, uint8_t count);
+
+///////// SD Response Processing /////////
+
+/**
+ * Extracts the 32 trailing data bits from an R3/R7 response.
+ */
+uint32_t get_ocr(uint8_t *response);
+
+bool sd_is_valid_voltage_cmd58(uint32_t ocr);
 
 /**
  * // XXX might want to create an enum of all posibilities, for now only interested in idle state
@@ -50,15 +64,13 @@ void sd_read_bytes(uint8_t *target, uint8_t count);
  * 6 - param error
  * 7 - not used
  */
-bool sd_is_r1_ok(uint8_t *response);
+bool sd_is_idle_state(uint8_t *response);
+
+///////// SD Flow /////////
 
 /**
- * Extracts the 32 trailing data bits from an R3/R7 response.
+ * Get the SD card into a working, non-idle state
  */
-uint32_t get_ocr(uint8_t *response);
-
-bool sd_is_valid_voltage(uint32_t ocr);
-
-void sd_init();
+bool sd_ready_card();
 
 #endif
