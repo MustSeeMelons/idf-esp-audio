@@ -20,6 +20,7 @@
         "stdio.h": "c",
         "*.inc": "c",
         "task.h": "c",
-        "*.tcc": "c"
+        "*.tcc": "c",
+        "spi_master.h": "c"
     }
 }

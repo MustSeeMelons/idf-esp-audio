@@ -7,8 +7,40 @@
 #define SD_MISO 19
 #define SD_SCK 18
 
+// TODO CMD55
+// TODO CMD41
+// TODO CMD58
+
+#define CMD_0_ID 0
+#define CMD_8_ID 8
+#define CMD_58_ID 58
+
+#define CMD_0_BODY 0
+#define CMD_8_BODY 0x1AA
+#define CMD_58_BODY 0
+
 static const char *TAG = "SD";
 static spi_device_handle_t spi;
+
+bool sd_is_r1_ok(uint8_t *response)
+{
+    return response[0] == 0x01;
+};
+
+uint32_t get_ocr(uint8_t *response)
+{
+    return (response[1] << 24) |
+           (response[2] << 16) |
+           (response[3] << 8) |
+           response[4];
+}
+
+bool sd_is_valid_voltage(uint32_t ocr)
+{
+    CMD58_OCR *ocr_struct = (CMD58_OCR *)&ocr;
+
+    return ocr_struct->v29_30 || ocr_struct->v30_31 || ocr_struct->v31_32 || ocr_struct->v32_33;
+}
 
 esp_err_t sd_send_command(uint8_t cmd, uint32_t arg)
 {
@@ -19,7 +51,20 @@ esp_err_t sd_send_command(uint8_t cmd, uint32_t arg)
     command[2] = (arg >> 16) & 0xFF;
     command[3] = (arg >> 8) & 0xFF;
     command[4] = arg & 0xFF;
-    command[5] = cmd == 0 ? 0x95 : 0x97; // CRC, valid only for CMD0 and CMD8
+
+    // CRC, required only by a few, so better to just hardcode for them
+    switch (cmd)
+    {
+    case 0:
+        command[5] = 0x95;
+        break;
+    case 8:
+        command[5] = 0x87;
+        break;
+    default:
+    case 58:
+        command[5] = 0xff;
+    }
 
     spi_transaction_t t = {
         .length = 6 * 8,
@@ -39,9 +84,32 @@ esp_err_t sd_recieve_response(uint8_t *response)
         .tx_buffer = &dummy,
         .rx_buffer = response,
     };
+
     ESP_ERROR_CHECK(spi_device_transmit(spi, &r));
 
     return ESP_OK;
+}
+
+void sd_read_bytes(uint8_t *target, uint8_t count)
+{
+    uint8_t byte = 0x00;
+
+    sd_recieve_response(&byte);
+
+    // Assume slave not ready if first byte is 0xff
+    while (byte == 0xff)
+    {
+        sd_recieve_response(&byte);
+    }
+
+    target[0] = byte;
+
+    // Read the rest
+    for (size_t i = 1; i < count; i++)
+    {
+        sd_recieve_response(&byte);
+        target[i] = byte;
+    }
 }
 
 void sd_init_card(void)
@@ -50,14 +118,14 @@ void sd_init_card(void)
 
     // Send CMD0 to reset the card
     uint8_t response = 0xff;
-    sd_send_command(0, 0);
+    sd_send_command(CMD_0_ID, CMD_0_BODY);
 
     uint8_t retries = 3;
     response = 0xff;
     while (response != 0x01)
     {
         sd_recieve_response(&response);
-        ESP_LOGI(TAG, "Reset response: %d", response);
+
         retries--;
 
         if (retries == 0)
@@ -71,22 +139,57 @@ void sd_init_card(void)
 
     // Send CMD8 to check voltage range
     uint8_t cmd8_response[5] = {};
-    // XXX CRC is wrong here
-    sd_send_command(8, 0x1AA);
 
-    sd_recieve_response((uint8_t *)(cmd8_response + 0));
-    sd_recieve_response((uint8_t *)(cmd8_response + 1));
-    sd_recieve_response((uint8_t *)(cmd8_response + 2));
-    sd_recieve_response((uint8_t *)(cmd8_response + 3));
-    sd_recieve_response((uint8_t *)(cmd8_response + 4));
+    sd_send_command(CMD_8_ID, CMD_8_BODY);
 
-    if (cmd8_response[0] != 0x01)
+    sd_read_bytes(cmd8_response, 5);
+
+    // Validate CMD8: R1 idle, pattern matches & voltage 2.7-3.6 (0x0001 in 16:19 positions)
+    if (sd_is_r1_ok(cmd8_response) && cmd8_response[4] != 0xaa && cmd8_response[3] == 0x01)
     {
-        ESP_LOGE(TAG, "CMD8 failed!");
+        ESP_LOGI(TAG, "CMD8 failed!");
+
+        sd_send_command(CMD_58_ID, CMD_58_BODY);
+
+        uint8_t cmd58_response[5] = {};
+
+        sd_read_bytes(cmd58_response, 5);
+
+        if (cmd58_response[0] != 0x01)
+        {
+            ESP_LOGI(TAG, "CMD58 failed!");
+        } else {
+            // TODO validate voltage
+
+            // TODO CMD55
+            // TODO ACMD41
+        }
+
         return;
     }
+    else
+    {
+        // CMD8 is valid! SD Spec V2!
+        ESP_LOGI(TAG, "CMD8 successful.");
 
-    ESP_LOGI(TAG, "CMD8 successful.");
+        // TODO CMD55
+        // TODO ACMD41
+
+        // TODO CMD58
+
+        sd_send_command(CMD_58_ID, CMD_58_BODY);
+
+        uint8_t cmd58_response[5] = {};
+
+        sd_read_bytes(cmd58_response, 5);
+
+        uint32_t ocr = get_ocr(cmd58_response);
+
+        if (sd_is_valid_voltage(ocr))
+        {
+            ESP_LOGI(TAG, "Card voltage OK");
+        }
+    }
 }
 
 void send_dummy_clocks(void)
@@ -102,6 +205,7 @@ void send_dummy_clocks(void)
     }
 }
 
+// TODO rename, this is SPI bus configuration for the SD card
 void sd_init()
 {
     gpio_pullup_en(SD_MOSI);
@@ -126,7 +230,7 @@ void sd_init()
         .mode = 0, // SPI mode 0
         .spics_io_num = SD_CS,
         .clock_speed_hz = 100000, // Initialize at low clock speed (100 kHz)
-        .queue_size = 1,
+        .queue_size = 3,
     };
 
     // Attach the SD card to the SPI bus
@@ -134,5 +238,3 @@ void sd_init()
 
     sd_init_card();
 }
-
-void perform() {}
