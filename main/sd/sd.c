@@ -7,11 +7,12 @@
 #define SD_MISO 19
 #define SD_SCK 18
 
-#define CMD_0_ID 0
+#define CMD_0_ID 0 // Reset card
 #define CMD_8_ID 8
 #define CMD_58_ID 58
 #define CMD_55_ID 55
 #define CMD_41_ID 41
+#define CMD_17_ID 17 // 0x51: Read single block
 
 #define CMD_0_BODY 0x00
 #define CMD_8_BODY 0x1AA
@@ -27,6 +28,8 @@ static spi_device_handle_t spi;
 
 // Initialized to an invalid byte
 static uint8_t current_byte = 0xff;
+
+static uint16_t read_block_size = SDHC_SDXC_BLOCK_SIZE;
 
 bool sd_is_idle_state(uint8_t *response)
 {
@@ -76,9 +79,8 @@ esp_err_t sd_send_command(uint8_t cmd, uint32_t arg)
         .length = 6 * 8,
         .tx_buffer = command,
     };
-    ESP_ERROR_CHECK(spi_device_transmit(spi, &t));
 
-    return ESP_OK;
+    return spi_device_transmit(spi, &t);
 }
 
 esp_err_t sd_read_byte(uint8_t *response)
@@ -91,9 +93,7 @@ esp_err_t sd_read_byte(uint8_t *response)
         .rx_buffer = response,
     };
 
-    ESP_ERROR_CHECK(spi_device_transmit(spi, &r));
-
-    return ESP_OK;
+    return spi_device_transmit(spi, &r);
 }
 
 // Read till we get a valid byte
@@ -110,7 +110,7 @@ static bool read_valid_byte()
     return false;
 }
 
-esp_err_t sd_read_bytes(uint8_t *target, uint8_t count)
+esp_err_t sd_read_bytes(uint8_t *target, uint32_t count)
 {
 
     if (!utils_retry(read_valid_byte))
@@ -122,66 +122,62 @@ esp_err_t sd_read_bytes(uint8_t *target, uint8_t count)
     target[0] = current_byte;
 
     // Read the rest
-    for (size_t i = 1; i < count; i++)
+    for (uint32_t i = 1; i < count; i++)
     {
-        sd_read_byte(&current_byte);
+
+        esp_err_t err = sd_read_byte(&current_byte);
+
+        if (err != ESP_OK)
+        {
+            ESP_LOGI(TAG, "ESP_ERR %d", (uint8_t)err);
+            return err;
+        }
+
         target[i] = current_byte;
     }
 
     return ESP_OK;
 }
 
-// TODO use retry util
 bool sd_ready_card()
 {
-    uint8_t retries = 10;
-    while (true)
+    esp_err_t err = ESP_OK;
+
+    // Tell the next command is application specific
+    sd_send_command(CMD_55_ID, CMD_55_BODY);
+    uint8_t cmd55_response;
+    err = sd_read_bytes(&cmd55_response, 1);
+
+    if (err != ESP_OK)
     {
-        esp_err_t err = ESP_OK;
+        ESP_LOGI(TAG, "Failed to read bytes.");
+        return false;
+    }
 
-        if (retries <= 0)
-        {
-            return false;
-        }
+    if (!sd_is_idle_state(&cmd55_response))
+    {
+        ESP_LOGI(TAG, "CMD55 fail.");
+        // Not counting towards fail counter, need both for a valid prompt
+        return false;
+    }
 
-        // Tell the next command is application specific
-        sd_send_command(CMD_55_ID, CMD_55_BODY);
-        uint8_t cmd55_response;
-        err = sd_read_bytes(&cmd55_response, 1);
+    // Capacity information & activate initialization process
+    sd_send_command(CMD_41_ID, CMD_41_BODY);
+    uint8_t acmd41_response;
+    err = sd_read_bytes(&acmd41_response, 1);
 
-        if (err != ESP_OK)
-        {
-            ESP_LOGI(TAG, "Failed to read bytes.");
-            continue;
-        }
+    if (err != ESP_OK)
+    {
+        ESP_LOGI(TAG, "Failed to read bytes.");
+        return false;
+    }
 
-        if (!sd_is_idle_state(&cmd55_response))
-        {
-            ESP_LOGI(TAG, "CMD55 fail.");
-            // Not counting towards fail counter, need both for a valid prompt
-            continue;
-        }
+    // We must not be in idle state, response should be 0x00
+    if (sd_is_idle_state(&acmd41_response))
+    {
+        ESP_LOGI(TAG, "CMD41 fail.");
 
-        // Capacity information & activate initialization process
-        sd_send_command(CMD_41_ID, CMD_41_BODY);
-        uint8_t acmd41_response;
-        err = sd_read_bytes(&acmd41_response, 1);
-
-        if (err != ESP_OK)
-        {
-            ESP_LOGI(TAG, "Failed to read bytes.");
-            continue;
-        }
-
-        // We must not be in idle state, response should be 0x00
-        if (sd_is_idle_state(&acmd41_response))
-        {
-            ESP_LOGI(TAG, "CMD41 fail.");
-            retries--;
-            continue;
-        }
-
-        break;
+        return false;
     }
 
     return true;
@@ -204,7 +200,7 @@ esp_err_t sd_init_card(void)
     sd_warmup();
 
     // Send CMD0 to reset the card, try a few times
-    sd_send_command(CMD_0_ID, CMD_0_BODY);
+    err = sd_send_command(CMD_0_ID, CMD_0_BODY);
 
     if (!utils_retry(read_byte_is_idle))
     {
@@ -231,7 +227,7 @@ esp_err_t sd_init_card(void)
         // Might be a SDHC/SDXC card
         ESP_LOGI(TAG, "CMD8 successful.");
 
-        if (!sd_ready_card())
+        if (!utils_retry_times(sd_ready_card, 10))
         {
             return ESP_FAIL;
         }
@@ -252,7 +248,9 @@ esp_err_t sd_init_card(void)
 
         CMD58_OCR *c = (CMD58_OCR *)&ocr;
 
-        // XXX set block size accordingly?
+        // The default
+        read_block_size = SDHC_SDXC_BLOCK_SIZE;
+
         if (c->card_capacity_status == 1)
         {
             ESP_LOGI(TAG, "High/Extended capacity card.");
@@ -297,6 +295,8 @@ esp_err_t sd_init_card(void)
                 return ESP_FAIL;
             }
 
+            read_block_size = SDSC_BLOCK_SIZE;
+
             return ESP_OK;
         }
     }
@@ -326,7 +326,28 @@ esp_err_t sd_init()
     sd_spi_init();
 
     // Get the SD card itself into a functional state
-    return sd_init_card();
+    esp_err_t err = sd_init_card();
+
+    // Reattach device for higher clock speeds
+    if (err == ESP_OK)
+    {
+        ESP_LOGI(TAG, "Card init success - bumping bus speed.");
+
+        spi_bus_remove_device(spi);
+
+        // XXX Go higher speeds on PCB, breadboard works on 1 Mhz
+        spi_device_interface_config_t dev_cfg = {
+            .mode = 0, // SPI mode 0
+            .spics_io_num = SD_CS,
+            .clock_speed_hz = 1 * 1000 * 1000, // 1 Mhz
+            .queue_size = 3,
+        };
+
+        // Attach the SD card to the SPI bus
+        return spi_bus_add_device(SPI2_HOST, &dev_cfg, &spi);
+    }
+
+    return err;
 }
 
 esp_err_t sd_spi_init()
@@ -358,6 +379,36 @@ esp_err_t sd_spi_init()
 
     // Attach the SD card to the SPI bus
     ESP_ERROR_CHECK(spi_bus_add_device(SPI2_HOST, &dev_cfg, &spi));
+
+    return ESP_OK;
+}
+
+esp_err_t sd_read_block(uint32_t block_id, uint8_t *destination)
+{
+    esp_err_t err = sd_send_command(CMD_17_ID, block_id);
+
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "Failed to send read command (17)");
+        return ESP_FAIL;
+    }
+
+    uint8_t buffer;
+    err = sd_read_bytes(&buffer, 1);
+
+    if (err != ESP_OK)
+    {
+        ESP_LOGE(TAG, "No response from slave (17)");
+        return ESP_FAIL;
+    }
+
+    if (buffer == 0x00)
+    {
+        // TODO we might get an error token instead of a data start
+        err = sd_read_bytes(destination, read_block_size + 3);
+
+        return err;
+    }
 
     return ESP_OK;
 }

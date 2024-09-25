@@ -17,7 +17,7 @@ We could read-up on mp3 decompression, but that seems a bit much, but lets see.
 A list of small steps to achieve for the larget goal! Feel free to add new items as we go.
 
 - [x] Initialize SPI master for reading data from the SD card
-- [ ] Figure out the structure of an SD card
+- [x] Figure out the structure of an SD card
 - [ ] Will have to read on FAT32
 - [ ] Get a file list from the SD card
 - [ ] Read a file from the SD card

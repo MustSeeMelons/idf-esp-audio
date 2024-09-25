@@ -6,6 +6,13 @@
 #include <string.h>
 #include "utils.h"
 
+#define SDHC_SDXC_BLOCK_SIZE 512
+#define SDSC_BLOCK_SIZE 256
+
+#define READ_START_TOKEN 0xFE
+#define READ_TOKEN_OK 0xFE
+#define READ_TOKEN_TIMEOUT_ERROR 0xFF // 0x0X exists for data errors as well
+
 typedef struct
 {
     volatile uint16_t reserved : 15;
@@ -37,10 +44,19 @@ esp_err_t sd_init_card(void);
 // Sends an SD SPI commabdm the whole 48 bits
 esp_err_t sd_send_command(uint8_t cmd, uint32_t arg);
 
-// Resiece a byte from SD SPI
+/**
+ * Read a byte from SPI.
+ * Returns status of operation.
+ * Most of the time better to use `sd_read_bytes`.
+ */
 esp_err_t sd_read_byte(uint8_t *response);
 
-esp_err_t sd_read_bytes(uint8_t *target, uint8_t count);
+/**
+ * Tries to read X bytes into the supplied buffer.
+ * Will retry for a valid byte.
+ * Returns status of operation.
+ */
+esp_err_t sd_read_bytes(uint8_t *target, uint32_t count);
 
 ///////// SD Response Processing /////////
 
@@ -73,5 +89,7 @@ bool sd_is_idle_state(uint8_t *response);
  * Get the SD card into a working, non-idle state
  */
 bool sd_ready_card();
+
+esp_err_t sd_read_block(uint32_t block_id, uint8_t *destination);
 
 #endif
