@@ -21,6 +21,7 @@
         "*.inc": "c",
         "task.h": "c",
         "*.tcc": "c",
-        "spi_master.h": "c"
+        "spi_master.h": "c",
+        "utils.h": "c"
     }
 }

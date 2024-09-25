@@ -4,6 +4,7 @@
 #include "driver/spi_master.h"
 #include "driver/gpio.h"
 #include <string.h>
+#include "utils.h"
 
 typedef struct
 {
@@ -39,7 +40,7 @@ esp_err_t sd_send_command(uint8_t cmd, uint32_t arg);
 // Resiece a byte from SD SPI
 esp_err_t sd_read_byte(uint8_t *response);
 
-void sd_read_bytes(uint8_t *target, uint8_t count);
+esp_err_t sd_read_bytes(uint8_t *target, uint8_t count);
 
 ///////// SD Response Processing /////////
 

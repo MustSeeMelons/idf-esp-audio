@@ -25,6 +25,9 @@ esp_err_t sd_spi_init(void);
 static const char *TAG = "SD";
 static spi_device_handle_t spi;
 
+// Initialized to an invalid byte
+static uint8_t current_byte = 0xff;
+
 bool sd_is_idle_state(uint8_t *response)
 {
     return response[0] == 0x01;
@@ -93,34 +96,49 @@ esp_err_t sd_read_byte(uint8_t *response)
     return ESP_OK;
 }
 
-void sd_read_bytes(uint8_t *target, uint8_t count)
+// Read till we get a valid byte
+static bool read_valid_byte()
 {
-    uint8_t byte = 0x00;
-    // XXX we could check if MISO is high as well?
-    sd_read_byte(&byte);
+    // XXX we could check if MISO is high without doing reads?
+    sd_read_byte(&current_byte);
 
-    // TODO have max retries & return status
-    // Assume slave not ready if first byte is 0xff
-    while (byte == 0xff)
+    if (current_byte != 0xff)
     {
-        sd_read_byte(&byte);
+        return true;
     }
 
-    target[0] = byte;
+    return false;
+}
+
+esp_err_t sd_read_bytes(uint8_t *target, uint8_t count)
+{
+
+    if (!utils_retry(read_valid_byte))
+    {
+        ESP_LOGE(TAG, "Failed to read a valid byte!");
+        return ESP_FAIL;
+    }
+
+    target[0] = current_byte;
 
     // Read the rest
     for (size_t i = 1; i < count; i++)
     {
-        sd_read_byte(&byte);
-        target[i] = byte;
+        sd_read_byte(&current_byte);
+        target[i] = current_byte;
     }
+
+    return ESP_OK;
 }
 
+// TODO use retry util
 bool sd_ready_card()
 {
     uint8_t retries = 10;
     while (true)
     {
+        esp_err_t err = ESP_OK;
+
         if (retries <= 0)
         {
             return false;
@@ -129,7 +147,13 @@ bool sd_ready_card()
         // Tell the next command is application specific
         sd_send_command(CMD_55_ID, CMD_55_BODY);
         uint8_t cmd55_response;
-        sd_read_bytes(&cmd55_response, 1);
+        err = sd_read_bytes(&cmd55_response, 1);
+
+        if (err != ESP_OK)
+        {
+            ESP_LOGI(TAG, "Failed to read bytes.");
+            continue;
+        }
 
         if (!sd_is_idle_state(&cmd55_response))
         {
@@ -141,7 +165,13 @@ bool sd_ready_card()
         // Capacity information & activate initialization process
         sd_send_command(CMD_41_ID, CMD_41_BODY);
         uint8_t acmd41_response;
-        sd_read_bytes(&acmd41_response, 1);
+        err = sd_read_bytes(&acmd41_response, 1);
+
+        if (err != ESP_OK)
+        {
+            ESP_LOGI(TAG, "Failed to read bytes.");
+            continue;
+        }
 
         // We must not be in idle state, response should be 0x00
         if (sd_is_idle_state(&acmd41_response))
@@ -157,27 +187,29 @@ bool sd_ready_card()
     return true;
 }
 
+// Read a byte (R1) from slave & check if slave is in idle state
+static bool read_byte_is_idle()
+{
+    uint8_t response = 0xff;
+    sd_read_byte(&response);
+
+    return response == 0x01;
+}
+
 esp_err_t sd_init_card(void)
 {
+    esp_err_t err = ESP_OK;
+
     // Neet a cycle warmp-up period for the card to start to function
     sd_warmup();
 
     // Send CMD0 to reset the card, try a few times
     sd_send_command(CMD_0_ID, CMD_0_BODY);
 
-    uint8_t retries = 3;
-    uint8_t response = 0xff;
-    while (response != 0x01)
+    if (!utils_retry(read_byte_is_idle))
     {
-        sd_read_byte(&response);
-
-        retries--;
-
-        if (retries == 0)
-        {
-            ESP_LOGE(TAG, "Failed to reset card!");
-            return ESP_FAIL;
-        }
+        ESP_LOGE(TAG, "Failed to reset card!");
+        return ESP_FAIL;
     }
 
     ESP_LOGI(TAG, "Card is in idle state.");
@@ -185,7 +217,13 @@ esp_err_t sd_init_card(void)
     // Send CMD8 to check card version and voltage range
     uint8_t cmd8_response[5] = {};
     sd_send_command(CMD_8_ID, CMD_8_BODY);
-    sd_read_bytes(cmd8_response, 5);
+    err = sd_read_bytes(cmd8_response, 5);
+
+    if (err != ESP_OK)
+    {
+        ESP_LOGI(TAG, "Failed to read bytes.");
+        return err;
+    }
 
     // Validate CMD8: R1 idle, pattern matches & voltage 2.7-3.6 (0x0001 in 16:19 positions)
     if (sd_is_idle_state(cmd8_response) && cmd8_response[4] == 0xaa && cmd8_response[3] == 0x01)
@@ -202,7 +240,13 @@ esp_err_t sd_init_card(void)
 
         uint8_t cmd58_response[5] = {};
 
-        sd_read_bytes(cmd58_response, 5);
+        err = sd_read_bytes(cmd58_response, 5);
+
+        if (err != ESP_OK)
+        {
+            ESP_LOGI(TAG, "Failed to read bytes.");
+            return err;
+        }
 
         uint32_t ocr = get_ocr(cmd58_response);
 
@@ -226,7 +270,13 @@ esp_err_t sd_init_card(void)
 
         sd_send_command(CMD_58_ID, CMD_58_BODY);
         uint8_t cmd58_response[5] = {};
-        sd_read_bytes(cmd58_response, 5);
+        err = sd_read_bytes(cmd58_response, 5);
+
+        if (err != ESP_OK)
+        {
+            ESP_LOGI(TAG, "Failed to read bytes.");
+            return err;
+        }
 
         if (!sd_is_idle_state(cmd58_response))
         {
