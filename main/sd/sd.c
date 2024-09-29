@@ -339,7 +339,7 @@ esp_err_t sd_init()
         spi_device_interface_config_t dev_cfg = {
             .mode = 0, // SPI mode 0
             .spics_io_num = SD_CS,
-            .clock_speed_hz = 1 * 1000 * 1000, // 1 Mhz
+            .clock_speed_hz = 1 * 100 * 1000, // 100 kHz
             .queue_size = 3,
         };
 
@@ -375,6 +375,8 @@ esp_err_t sd_spi_init()
         .spics_io_num = SD_CS,
         .clock_speed_hz = 100000, // Initialize at low clock speed (100 kHz)
         .queue_size = 3,
+        .cs_ena_posttrans = 8,
+        .cs_ena_pretrans = 8
     };
 
     // Attach the SD card to the SPI bus
@@ -383,20 +385,21 @@ esp_err_t sd_spi_init()
     return ESP_OK;
 }
 
-esp_err_t sd_read_block(uint32_t block_id, uint8_t *destination)
+esp_err_t sd_read_block(uint32_t block_address, uint8_t *destination)
 {
-    esp_err_t err = sd_send_command(CMD_17_ID, block_id);
+    // Convert block address into byte address
+    esp_err_t op_status = sd_send_command(CMD_17_ID, block_address << 9);
 
-    if (err != ESP_OK)
+    if (op_status != ESP_OK)
     {
         ESP_LOGE(TAG, "Failed to send read command (17)");
         return ESP_FAIL;
     }
 
     uint8_t buffer;
-    err = sd_read_bytes(&buffer, 1);
+    op_status = sd_read_bytes(&buffer, 1);
 
-    if (err != ESP_OK)
+    if (op_status != ESP_OK)
     {
         ESP_LOGE(TAG, "No response from slave (17)");
         return ESP_FAIL;
@@ -404,10 +407,25 @@ esp_err_t sd_read_block(uint32_t block_id, uint8_t *destination)
 
     if (buffer == 0x00)
     {
-        // TODO we might get an error token instead of a data start
-        err = sd_read_bytes(destination, read_block_size + 3);
+        uint8_t temp_dest[read_block_size + READ_EXTRA_LENGTH];
 
-        return err;
+        // We will have a start block + CRC
+        op_status = sd_read_bytes(temp_dest, read_block_size + READ_EXTRA_LENGTH);
+
+        if (temp_dest[0] != READ_START_TOKEN)
+        {
+            ESP_LOGE(TAG, "Read error: %d", temp_dest[0]);
+            return ESP_FAIL;
+        }
+        else
+        {
+            // Don't return start token & CRC from the read operation
+            memcpy(destination, &temp_dest[1], sizeof(uint8_t) * read_block_size);
+        }
+
+        ESP_LOGI(TAG, "Read block %d", (unsigned int)block_address);
+
+        return op_status;
     }
 
     return ESP_OK;

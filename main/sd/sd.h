@@ -13,6 +13,8 @@
 #define READ_TOKEN_OK 0xFE
 #define READ_TOKEN_TIMEOUT_ERROR 0xFF // 0x0X exists for data errors as well
 
+#define READ_EXTRA_LENGTH 3 // When reading we always get 3 extra bytes: start token + CRC
+
 typedef struct
 {
     volatile uint16_t reserved : 15;
@@ -90,6 +92,6 @@ bool sd_is_idle_state(uint8_t *response);
  */
 bool sd_ready_card();
 
-esp_err_t sd_read_block(uint32_t block_id, uint8_t *destination);
+esp_err_t sd_read_block(uint32_t block_address, uint8_t *destination);
 
 #endif

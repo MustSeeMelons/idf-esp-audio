@@ -22,6 +22,13 @@
         "task.h": "c",
         "*.tcc": "c",
         "spi_master.h": "c",
-        "utils.h": "c"
-    }
+        "utils.h": "c",
+        "esp_log.h": "c",
+        "stdint.h": "c",
+        "string.h": "c",
+        "esp_err.h": "c",
+        "fat.h": "c",
+        "stdbool.h": "c"
+    },
+    "cmake.cmakePath": "cmake"
 }
