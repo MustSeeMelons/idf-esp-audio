@@ -28,7 +28,9 @@
         "string.h": "c",
         "esp_err.h": "c",
         "fat.h": "c",
-        "stdbool.h": "c"
+        "stdbool.h": "c",
+        "chrono": "c",
+        "typeinfo": "c"
     },
     "cmake.cmakePath": "cmake"
 }

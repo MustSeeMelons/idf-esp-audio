@@ -46,7 +46,8 @@ The card must be set into SPI mode - MOSI/CS held high for atleast 74 cycles. Af
 - [Overflow](https://electronics.stackexchange.com/questions/602105/how-can-i-initialize-use-sd-cards-with-spi)
 - [FAT32](https://www.pjrc.com/tech/8051/ide/fat32.html)
 - [Tutorial series](http://www.rjhcoding.com/avrc-sd-interface-1.php)
-
+- [MS Doc](https://www.cs.fsu.edu/~cop4610t/assignments/project3/spec/fatspec.pdf)
+- 
 ## Upload
 
 To upload to the clone - power the board on while holding down boot & then flash the device. If that fails check device manager if the device is visible.
